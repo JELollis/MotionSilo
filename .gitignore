@@ -180,7 +180,7 @@ cython_debug/
 .cursorignore
 .cursorindexingignore
 
-# Motion Camera local output
+# MotionSilo local output
 recordings/
 test-recordings/
 *.mp4

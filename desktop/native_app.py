@@ -1,7 +1,7 @@
-"""Motion Camera - native Windows desktop app.
+"""MotionSilo - native Windows desktop app.
 
 Uses Qt Multimedia for camera access, preview, motion sampling, and recording.
-Clips are written to the user's Videos/Motion Camera folder by default.
+Clips are written to the user's Videos/MotionSilo folder by default.
 """
 
 from __future__ import annotations
@@ -53,12 +53,12 @@ APP_DIR = Path(__file__).resolve().parent
 RECORDINGS_DIR = APP_DIR / "recordings"
 
 
-class MotionCamera(QMainWindow):
+class MotionSilo(QMainWindow):
     motion = Signal()
 
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("Motion Camera")
+        self.setWindowTitle("MotionSilo")
         self.setWindowIcon(QIcon(str(APP_DIR / "app_icon.svg")))
         self.resize(1180, 760)
         self.setMinimumSize(900, 620)
@@ -75,9 +75,9 @@ class MotionCamera(QMainWindow):
         self.frames_seen = 0
         self.recording_started: datetime | None = None
         self.recording_path: Path | None = None
-        self.settings = QSettings("MotionCamera", "MotionCamera")
+        self.settings = QSettings("MotionSilo", "MotionSilo")
         default_folder = QStandardPaths.writableLocation(QStandardPaths.MoviesLocation)
-        default_folder = Path(default_folder) / "Motion Camera" if default_folder else APP_DIR / "recordings"
+        default_folder = Path(default_folder) / "MotionSilo" if default_folder else APP_DIR / "recordings"
         saved_folder = self.settings.value("save_folder", "")
         self.save_folder = Path(saved_folder) if saved_folder else default_folder
         self.cooldown_timer = QTimer(self)
@@ -126,7 +126,7 @@ class MotionCamera(QMainWindow):
         central = QWidget(); self.setCentralWidget(central)
         root = QVBoxLayout(central); root.setContentsMargins(30, 26, 30, 20); root.setSpacing(18)
         header = QHBoxLayout()
-        title = QLabel("◉  motion<span style='color:#d5f28a;font-weight:400'>camera</span>"); title.setTextFormat(Qt.RichText); title.setStyleSheet("font-size: 21px; font-weight: 800")
+        title = QLabel("◉  motion<span style='color:#d5f28a;font-weight:400'>silo</span>"); title.setTextFormat(Qt.RichText); title.setStyleSheet("font-size: 21px; font-weight: 800")
         self.connection = QLabel("●  Camera not connected"); self.connection.setObjectName("muted")
         header.addWidget(title); header.addStretch(); header.addWidget(self.connection); root.addLayout(header)
 
@@ -357,4 +357,4 @@ class PlaybackDialog(QDialog):
 
 
 if __name__ == "__main__":
-    app = QApplication(sys.argv); app.setWindowIcon(QIcon(str(APP_DIR / "app_icon.svg"))); window = MotionCamera(); window.show(); sys.exit(app.exec())
+    app = QApplication(sys.argv); app.setWindowIcon(QIcon(str(APP_DIR / "app_icon.svg"))); window = MotionSilo(); window.show(); sys.exit(app.exec())
