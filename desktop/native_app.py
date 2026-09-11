@@ -37,6 +37,7 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QMainWindow,
     QDialog,
+    QMenu,
     QMessageBox,
     QProgressBar,
     QPushButton,
@@ -160,7 +161,7 @@ class MotionCamera(QMainWindow):
         self.save_location = QLabel(); self.save_location.setToolTip(str(self.save_folder)); self.save_location.setTextInteractionFlags(Qt.TextSelectableByMouse); self.save_location.setStyleSheet("color:#e8ebe5")
         choose_folder = QPushButton("Choose folder…"); choose_folder.clicked.connect(self.choose_save_folder)
         save_row.addWidget(save_label); save_row.addWidget(self.save_location, 1); save_row.addWidget(choose_folder); recordings_layout.addLayout(save_row)
-        self.recordings = QListWidget(); self.recordings.setMinimumHeight(105); recordings_layout.addWidget(self.recordings); root.addWidget(recordings_box)
+        self.recordings = QListWidget(); self.recordings.setMinimumHeight(105); self.recordings.setContextMenuPolicy(Qt.CustomContextMenu); self.recordings.customContextMenuRequested.connect(self.show_recording_menu); recordings_layout.addWidget(self.recordings); root.addWidget(recordings_box)
         self.recordings.itemDoubleClicked.connect(self.play_selected_recording)
         self.setStatusBar(QStatusBar()); self.statusBar().showMessage(f"Recordings folder: {self.save_folder}")
         self.update_save_location_label()
@@ -196,6 +197,32 @@ class MotionCamera(QMainWindow):
     def play_selected_recording(self, item: QListWidgetItem) -> None:
         path = item.data(Qt.UserRole)
         if path: PlaybackDialog(Path(path), self).exec()
+
+    def show_recording_menu(self, position) -> None:
+        item = self.recordings.itemAt(position)
+        if item is None: return
+        menu = QMenu(self)
+        play_action = menu.addAction("▶  Play recording")
+        delete_action = menu.addAction("Delete recording")
+        chosen = menu.exec(self.recordings.viewport().mapToGlobal(position))
+        if chosen == play_action: self.play_selected_recording(item)
+        elif chosen == delete_action: self.delete_recording(item)
+
+    def delete_recording(self, item: QListWidgetItem) -> None:
+        path = Path(item.data(Qt.UserRole))
+        try:
+            is_local = path.resolve().parent == self.save_folder.resolve()
+        except OSError:
+            is_local = False
+        if not is_local: self.statusBar().showMessage("That recording is outside the selected save folder."); return
+        answer = QMessageBox.question(self, "Delete recording?", f"Delete {path.name} permanently?", QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if answer != QMessageBox.Yes: return
+        try:
+            path.unlink()
+            self.recordings.takeItem(self.recordings.row(item))
+            self.statusBar().showMessage(f"Deleted recording: {path.name}")
+        except OSError as error:
+            QMessageBox.warning(self, "Could not delete recording", str(error))
 
     def select_camera(self, index: int) -> None:
         if self.monitoring or index < 0: return
