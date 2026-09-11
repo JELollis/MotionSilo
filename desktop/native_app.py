@@ -75,6 +75,8 @@ class MotionSilo(QMainWindow):
         self.sink: QVideoSink | None = None
         self.monitoring = False
         self.previous_frame: bytes | None = None
+        self.previous_mean: float | None = None
+        self.motion_hits = 0
         self.frames_seen = 0
         self.recording_started: datetime | None = None
         self.recording_path: Path | None = None
@@ -252,19 +254,51 @@ class MotionSilo(QMainWindow):
     def sample_motion(self) -> None:
         image = getattr(self, "current_frame", None)
         if image is None or image.isNull(): return
-        image = image.convertToFormat(QImage.Format_Grayscale8).scaled(160, 90, Qt.IgnoreAspectRatio, Qt.FastTransformation)
-        current = bytes(image.constBits()[: image.sizeInBytes()])
-        if self.previous_frame is None: self.previous_frame = current; return
+        # Smooth downsampling reduces sensor noise; brightness normalization
+        # suppresses whole-frame exposure changes common in dark scenes.
+        image = image.convertToFormat(QImage.Format_Grayscale8).scaled(80, 45, Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
+        frame_width, frame_height = image.width(), image.height()
+        raw = bytes(image.constBits())
+        stride = image.bytesPerLine()
+        current = b"".join(raw[row * stride: row * stride + frame_width] for row in range(frame_height))
+        if len(current) != frame_width * frame_height: return
+        current_mean = sum(current) / max(1, len(current))
+        if self.previous_frame is None or len(self.previous_frame) != len(current):
+            self.previous_frame = current
+            self.previous_mean = current_mean
+            return
         # Compare downsampled grayscale frames. The high setting uses a lower
         # pixel delta and area threshold so slow movement in a dark porch
         # scene, such as a cat approaching a trap, is not missed.
-        pixel_delta = {1: 24, 2: 14, 3: 8}[self.sensitivity.value()]
-        area_threshold = {1: 0.060, 2: 0.020, 3: 0.006}[self.sensitivity.value()]
-        changed_pixels = sum(1 for a, b in zip(current, self.previous_frame) if abs(a - b) >= pixel_delta)
-        change_ratio = changed_pixels / max(1, len(current))
+        pixel_delta = {1: 24, 2: 18, 3: 12}[self.sensitivity.value()]
+        area_threshold = {1: 0.045, 2: 0.020, 3: 0.008}[self.sensitivity.value()]
+        previous_mean = self.previous_mean or current_mean
+        # Score 4x4 regions instead of individual pixels. Isolated sensor
+        # noise can affect many pixels, but a moving subject changes adjacent
+        # pixels within the same regions.
+        width, height, block = frame_width, frame_height, 4
+        changed_blocks = 0
+        total_blocks = ((width + block - 1) // block) * ((height + block - 1) // block)
+        for block_y in range(0, height, block):
+            for block_x in range(0, width, block):
+                changed = 0
+                for y in range(block_y, min(block_y + block, height)):
+                    offset = y * width
+                    for x in range(block_x, min(block_x + block, width)):
+                        if abs((current[offset + x] - current_mean) - (self.previous_frame[offset + x] - previous_mean)) >= pixel_delta:
+                            changed += 1
+                if changed >= 2: changed_blocks += 1
+        change_ratio = changed_blocks / max(1, total_blocks)
         self.previous_frame = current
+        self.previous_mean = current_mean
         self.activity_meter.setValue(min(100, round(change_ratio * 1200)))
-        if change_ratio >= area_threshold: self.motion_detected()
+        if change_ratio >= area_threshold:
+            self.motion_hits += 1
+        else:
+            self.motion_hits = max(0, self.motion_hits - 1)
+        if self.motion_hits >= 2:
+            self.motion_hits = 0
+            self.motion_detected()
 
     def motion_detected(self) -> None:
         self.motion_status.setText("●  Motion detected — recording")
@@ -379,7 +413,7 @@ class MotionSilo(QMainWindow):
             self.statusBar().showMessage(f"Recorder error: {message}")
 
     def start_monitoring(self) -> None:
-        self.clear_buffer_segments(); self.monitoring = True; self.previous_frame = None; self.frames_seen = 0; self.start.setEnabled(False); self.stop.setEnabled(True); self.camera_select.setEnabled(False); self.motion_status.setText("●  Monitoring — no motion detected"); self.motion_status.setProperty("detected", False); self.motion_status.style().unpolish(self.motion_status); self.motion_status.style().polish(self.motion_status); self.activity.setText("Monitoring for movement…"); self.statusBar().showMessage(f"Monitoring active — {PREBUFFER_SECONDS}s pre-buffer enabled"); self.start_buffer_segment(); self.buffer_timer.start(PREBUFFER_SECONDS * 1000); self.motion_timer.start(250)
+        self.clear_buffer_segments(); self.monitoring = True; self.previous_frame = None; self.previous_mean = None; self.motion_hits = 0; self.frames_seen = 0; self.start.setEnabled(False); self.stop.setEnabled(True); self.camera_select.setEnabled(False); self.motion_status.setText("●  Monitoring — no motion detected"); self.motion_status.setProperty("detected", False); self.motion_status.style().unpolish(self.motion_status); self.motion_status.style().polish(self.motion_status); self.activity.setText("Monitoring for movement…"); self.statusBar().showMessage(f"Monitoring active — {PREBUFFER_SECONDS}s pre-buffer enabled"); self.start_buffer_segment(); self.buffer_timer.start(PREBUFFER_SECONDS * 1000); self.motion_timer.start(250)
 
     def stop_monitoring(self) -> None:
         self.monitoring = False; self.motion_timer.stop(); self.buffer_timer.stop(); self.cooldown_timer.stop(); self.stop_recording(); self.clear_buffer_segments(); self.start.setEnabled(True); self.stop.setEnabled(False); self.camera_select.setEnabled(True); self.activity.setText("Monitoring stopped")
