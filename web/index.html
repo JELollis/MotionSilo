@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#111414" />
+    <title>Motion Camera</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="topbar">
+        <a class="brand" href="."><span class="brand-mark">◉</span> motion<span>camera</span></a>
+        <div class="topbar-meta"><span class="status-dot"></span><span id="permissionLabel">Camera not connected</span><span class="divider"></span><span class="mono">LOCAL MODE</span></div>
+      </header>
+
+      <section class="hero">
+        <div>
+          <p class="eyebrow">Motion-triggered recording</p>
+          <h1>Keep an eye on<br /><em>what matters.</em></h1>
+        </div>
+        <p class="hero-copy">Select a camera, tune the sensitivity, and let Motion Camera record only when something moves. Everything stays on this device.</p>
+      </section>
+
+      <section class="workspace">
+        <div class="preview-card">
+          <div class="preview-head"><span class="live-label"><i id="liveIndicator"></i><span id="previewLabel">Preview offline</span></span><span class="mono" id="resolutionLabel">—</span></div>
+          <div class="video-wrap">
+            <video id="preview" autoplay playsinline muted></video>
+            <div class="empty-state" id="emptyState"><div class="camera-icon">⌁</div><strong>Connect a camera to begin</strong><span>Your camera preview will appear here</span></div>
+            <div class="motion-badge" id="motionBadge"><span></span> Motion detected</div>
+            <div class="recording-badge" id="recordingBadge"><span></span> Recording <b id="recordingTime">00:00</b></div>
+          </div>
+          <div class="preview-foot"><span id="activityText">Waiting for camera</span><span class="activity-meter"><i id="activityMeter"></i></span><span class="mono" id="clock">00:00:00</span></div>
+        </div>
+
+        <aside class="control-panel">
+          <div class="panel-section">
+            <div class="section-title"><span>01</span> Camera source</div>
+            <label class="field-label" for="cameraSelect">Available cameras</label>
+            <select id="cameraSelect"><option value="">No cameras found</option></select>
+            <button class="secondary-button" id="refreshCameras">↻ &nbsp;Refresh camera list</button>
+            <p class="hint" id="cameraHint">Allow camera access to discover available devices.</p>
+          </div>
+          <div class="panel-section settings-section">
+            <div class="section-title"><span>02</span> Detection settings</div>
+            <div class="range-row"><label for="sensitivity">Motion sensitivity</label><output id="sensitivityValue">Medium</output></div>
+            <input type="range" id="sensitivity" min="1" max="3" value="2" />
+            <div class="range-labels"><span>Less sensitive</span><span>More sensitive</span></div>
+            <div class="range-row"><label for="cooldown">Post-motion recording</label><output id="cooldownValue">10 sec</output></div>
+            <input type="range" id="cooldown" min="0" max="30" value="10" />
+            <div class="range-labels"><span>Stop immediately</span><span>Keep recording</span></div>
+          </div>
+          <div class="panel-section action-section">
+            <div class="session-row"><span>Session status</span><strong id="sessionStatus">INACTIVE</strong></div>
+            <button class="primary-button" id="startButton" disabled><span class="button-icon">▶</span> Start monitoring</button>
+            <button class="stop-button" id="stopButton" disabled>Stop monitoring</button>
+          </div>
+        </aside>
+      </section>
+
+      <section class="recordings-section">
+        <div class="recordings-heading"><div><p class="eyebrow">Captured moments</p><h2>Recent recordings <span id="recordingCount">0</span></h2><p class="save-location" id="saveLocation">Browser downloads</p></div><div class="recordings-actions"><button class="text-button" id="chooseSaveFolder">Choose save folder</button><button class="text-button" id="clearRecordings" disabled>Clear all</button></div></div>
+        <div class="recordings-grid" id="recordingsGrid"><div class="recordings-empty" id="recordingsEmpty"><span>○</span><p>No motion events yet</p><small>Recordings will appear here when motion is detected.</small></div></div>
+      </section>
+
+      <footer><span>Motion Camera <span class="muted">/ Private by design</span></span><span class="mono">MediaRecorder · WebRTC</span></footer>
+    </main>
+    <canvas id="motionCanvas" hidden></canvas>
+    <script src="app.js"></script>
+  </body>
+</html>
