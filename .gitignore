@@ -181,6 +181,7 @@ cython_debug/
 .cursorindexingignore
 
 # MotionSilo local output
+/installer/
 recordings/
 test-recordings/
 *.mp4
