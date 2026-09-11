@@ -243,11 +243,16 @@ class MotionSilo(QMainWindow):
         image = image.convertToFormat(QImage.Format_Grayscale8).scaled(160, 90, Qt.IgnoreAspectRatio, Qt.FastTransformation)
         current = bytes(image.constBits()[: image.sizeInBytes()])
         if self.previous_frame is None: self.previous_frame = current; return
-        changed_pixels = sum(1 for a, b in zip(current, self.previous_frame) if abs(a - b) > 18)
-        change_ratio = changed_pixels / len(current)
+        # Compare downsampled grayscale frames. The high setting uses a lower
+        # pixel delta and area threshold so slow movement in a dark porch
+        # scene, such as a cat approaching a trap, is not missed.
+        pixel_delta = {1: 24, 2: 14, 3: 8}[self.sensitivity.value()]
+        area_threshold = {1: 0.060, 2: 0.020, 3: 0.006}[self.sensitivity.value()]
+        changed_pixels = sum(1 for a, b in zip(current, self.previous_frame) if abs(a - b) >= pixel_delta)
+        change_ratio = changed_pixels / max(1, len(current))
         self.previous_frame = current
         self.activity_meter.setValue(min(100, round(change_ratio * 1200)))
-        if change_ratio > {1: 0.060, 2: 0.030, 3: 0.015}[self.sensitivity.value()]: self.motion_detected()
+        if change_ratio >= area_threshold: self.motion_detected()
 
     def motion_detected(self) -> None:
         self.motion_status.setText("●  Motion detected — recording")
