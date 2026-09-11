@@ -7,6 +7,8 @@ Clips are written to the user's Videos/MotionSilo folder by default.
 from __future__ import annotations
 
 import sys
+import shutil
+import tempfile
 from datetime import datetime
 from pathlib import Path
 
@@ -51,6 +53,7 @@ from PySide6.QtWidgets import (
 
 APP_DIR = Path(__file__).resolve().parent
 RECORDINGS_DIR = APP_DIR / "recordings"
+PREBUFFER_SECONDS = 10
 
 
 class MotionSilo(QMainWindow):
@@ -75,6 +78,13 @@ class MotionSilo(QMainWindow):
         self.frames_seen = 0
         self.recording_started: datetime | None = None
         self.recording_path: Path | None = None
+        self.buffer_dir = Path(tempfile.gettempdir()) / "MotionSilo" / "prebuffer"
+        self.buffer_segments: list[Path] = []
+        self.motion_event_active = False
+        self.capture_current_segment = False
+        self.event_started: datetime | None = None
+        self.event_part = 0
+        self.rotating_buffer = False
         self.settings = QSettings("MotionSilo", "MotionSilo")
         default_folder = QStandardPaths.writableLocation(QStandardPaths.MoviesLocation)
         default_folder = Path(default_folder) / "MotionSilo" if default_folder else APP_DIR / "recordings"
@@ -82,7 +92,9 @@ class MotionSilo(QMainWindow):
         self.save_folder = Path(saved_folder) if saved_folder else default_folder
         self.cooldown_timer = QTimer(self)
         self.cooldown_timer.setSingleShot(True)
-        self.cooldown_timer.timeout.connect(self.stop_recording)
+        self.cooldown_timer.timeout.connect(self.finish_motion_event)
+        self.buffer_timer = QTimer(self)
+        self.buffer_timer.timeout.connect(self.rotate_buffer_segment)
         self.motion_timer = QTimer(self)
         self.motion_timer.timeout.connect(self.sample_motion)
         self.motion_clear_timer = QTimer(self)
@@ -259,7 +271,12 @@ class MotionSilo(QMainWindow):
         self.motion_status.setProperty("detected", True); self.motion_status.style().unpolish(self.motion_status); self.motion_status.style().polish(self.motion_status)
         self.activity.setText("Motion detected — recording")
         self.motion_clear_timer.start(1200)
-        if self.recorder.recorderState() != QMediaRecorder.RecordingState: self.start_recording()
+        if not self.motion_event_active:
+            self.motion_event_active = True
+            self.capture_current_segment = True
+            self.event_started = datetime.now()
+            self.event_part = 0
+            self.preserve_buffer_segments()
         self.cooldown_timer.start(self.cooldown.value() * 1000 + 1000)
 
     def clear_motion_indicator(self) -> None:
@@ -267,19 +284,55 @@ class MotionSilo(QMainWindow):
             self.motion_status.setText("●  No motion detected")
             self.motion_status.setProperty("detected", False); self.motion_status.style().unpolish(self.motion_status); self.motion_status.style().polish(self.motion_status)
 
-    def start_recording(self) -> None:
+    def start_buffer_segment(self) -> None:
+        if self.recorder.recorderState() != QMediaRecorder.StoppedState: return
         try:
-            self.save_folder.mkdir(parents=True, exist_ok=True)
+            self.buffer_dir.mkdir(parents=True, exist_ok=True)
         except OSError as error:
-            self.statusBar().showMessage(f"Cannot create recording folder: {error}")
+            self.statusBar().showMessage(f"Cannot create temporary recording folder: {error}")
             return
-        self.recording_started = datetime.now(); self.recording_path = self.save_folder / f"motion_{self.recording_started:%Y%m%d_%H%M%S}.mp4"
+        self.recording_started = datetime.now()
+        self.recording_path = self.buffer_dir / f"segment_{self.recording_started:%Y%m%d_%H%M%S_%f}.mp4"
         media_format = QMediaFormat()
         media_format.setFileFormat(QMediaFormat.MPEG4)
         media_format.setVideoCodec(QMediaFormat.H264)
         self.recorder.setMediaFormat(media_format)
         self.recorder.setOutputLocation(QUrl.fromLocalFile(str(self.recording_path)))
         self.recorder.record()
+
+    def clear_buffer_segments(self) -> None:
+        for path in self.buffer_segments:
+            try: path.unlink(missing_ok=True)
+            except OSError: pass
+        self.buffer_segments.clear()
+
+    def rotate_buffer_segment(self) -> None:
+        if self.recorder.recorderState() == QMediaRecorder.RecordingState and not self.rotating_buffer:
+            self.rotating_buffer = True
+            self.recorder.stop()
+
+    def preserve_buffer_segments(self) -> None:
+        for path in list(self.buffer_segments):
+            self.save_buffer_segment(path, prebuffer=True)
+        self.buffer_segments.clear()
+
+    def save_buffer_segment(self, path: Path, prebuffer: bool = False) -> None:
+        if not path.exists(): return
+        try:
+            self.save_folder.mkdir(parents=True, exist_ok=True)
+            started = self.event_started or datetime.now()
+            suffix = "pre" if prebuffer else f"part{self.event_part:02d}"
+            destination = self.save_folder / f"motion_{started:%Y%m%d_%H%M%S}_{suffix}.mp4"
+            shutil.move(str(path), str(destination))
+            if not prebuffer: self.event_part += 1
+            self.add_recording(destination)
+        except OSError as error:
+            self.statusBar().showMessage(f"Could not save recording segment: {error}")
+
+    def finish_motion_event(self) -> None:
+        if self.motion_event_active:
+            self.motion_event_active = False
+            self.capture_current_segment = True
 
     def actual_location_changed(self, location: QUrl) -> None:
         if location.isValid() and location.toLocalFile():
@@ -290,13 +343,30 @@ class MotionSilo(QMainWindow):
 
     def recorder_state_changed(self, state: QMediaRecorder.RecorderState) -> None:
         if state == QMediaRecorder.RecordingState:
-            self.motion_status.setText("●  Recording — motion detected")
-            self.motion_status.setProperty("detected", True); self.motion_status.style().unpolish(self.motion_status); self.motion_status.style().polish(self.motion_status)
-            self.statusBar().showMessage(f"Recording: {self.recording_path}")
+            self.motion_status.setText("●  Recording — motion detected" if self.motion_event_active else "●  Monitoring — pre-buffer active")
+            self.motion_status.setProperty("detected", self.motion_event_active); self.motion_status.style().unpolish(self.motion_status); self.motion_status.style().polish(self.motion_status)
+            self.statusBar().showMessage("Recording motion event" if self.motion_event_active else f"Pre-buffer active ({PREBUFFER_SECONDS}s)")
         elif state == QMediaRecorder.StoppedState and self.recording_path:
-            self.add_recording(self.recording_path)
-            self.motion_status.setText("●  No motion detected")
-            self.motion_status.setProperty("detected", False); self.motion_status.style().unpolish(self.motion_status); self.motion_status.style().polish(self.motion_status)
+            finished = self.recording_path
+            self.recording_path = None
+            self.rotating_buffer = False
+            if self.motion_event_active or self.capture_current_segment:
+                self.save_buffer_segment(finished)
+                self.capture_current_segment = False
+            elif self.monitoring:
+                self.buffer_segments.append(finished)
+                while len(self.buffer_segments) > 1:
+                    stale = self.buffer_segments.pop(0)
+                    try: stale.unlink(missing_ok=True)
+                    except OSError: pass
+            else:
+                try: finished.unlink(missing_ok=True)
+                except OSError: pass
+            if self.monitoring:
+                self.start_buffer_segment()
+            else:
+                self.motion_status.setText("●  No motion detected")
+                self.motion_status.setProperty("detected", False); self.motion_status.style().unpolish(self.motion_status); self.motion_status.style().polish(self.motion_status)
 
     def add_recording(self, path: Path) -> None:
         if not path.exists(): return
@@ -309,10 +379,10 @@ class MotionSilo(QMainWindow):
             self.statusBar().showMessage(f"Recorder error: {message}")
 
     def start_monitoring(self) -> None:
-        self.monitoring = True; self.previous_frame = None; self.frames_seen = 0; self.start.setEnabled(False); self.stop.setEnabled(True); self.camera_select.setEnabled(False); self.motion_status.setText("●  Monitoring — no motion detected"); self.motion_status.setProperty("detected", False); self.motion_status.style().unpolish(self.motion_status); self.motion_status.style().polish(self.motion_status); self.activity.setText("Monitoring for movement…"); self.statusBar().showMessage("Monitoring active — move in front of the camera to test motion detection"); self.motion_timer.start(250)
+        self.clear_buffer_segments(); self.monitoring = True; self.previous_frame = None; self.frames_seen = 0; self.start.setEnabled(False); self.stop.setEnabled(True); self.camera_select.setEnabled(False); self.motion_status.setText("●  Monitoring — no motion detected"); self.motion_status.setProperty("detected", False); self.motion_status.style().unpolish(self.motion_status); self.motion_status.style().polish(self.motion_status); self.activity.setText("Monitoring for movement…"); self.statusBar().showMessage(f"Monitoring active — {PREBUFFER_SECONDS}s pre-buffer enabled"); self.start_buffer_segment(); self.buffer_timer.start(PREBUFFER_SECONDS * 1000); self.motion_timer.start(250)
 
     def stop_monitoring(self) -> None:
-        self.monitoring = False; self.motion_timer.stop(); self.cooldown_timer.stop(); self.stop_recording(); self.start.setEnabled(True); self.stop.setEnabled(False); self.camera_select.setEnabled(True); self.activity.setText("Monitoring stopped")
+        self.monitoring = False; self.motion_timer.stop(); self.buffer_timer.stop(); self.cooldown_timer.stop(); self.stop_recording(); self.clear_buffer_segments(); self.start.setEnabled(True); self.stop.setEnabled(False); self.camera_select.setEnabled(True); self.activity.setText("Monitoring stopped")
 
     def closeEvent(self, event) -> None:
         self.stop_monitoring()
